@@ -52,11 +52,63 @@ const isMac =
   (/macintosh|mac os x/i.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
+const isDvorak =
+  typeof window !== 'undefined' &&
+  (navigator.language === 'en-DV' ||
+    navigator.languages?.includes('en-DV') ||
+    document.documentElement.lang === 'en-DV');
+
+const dvorakToQwerty: Record<string, string> = {
+  a: 'a',
+  b: 'x',
+  c: 'j',
+  d: 'e',
+  e: '.',
+  f: 'u',
+  g: 'i',
+  h: 'd',
+  i: 'c',
+  j: 'h',
+  k: 't',
+  l: 'n',
+  m: 'm',
+  n: 'b',
+  o: 'r',
+  p: 'l',
+  q: "'",
+  r: 'p',
+  s: 'o',
+  t: 'k',
+  u: 'g',
+  v: 'q',
+  w: ',',
+  x: 'z',
+  y: 'f',
+  z: ';',
+  ';': 's',
+  "'": '-',
+  ',': 'w',
+  '.': 'v',
+  '/': 'z',
+  '-': '[',
+  '[': '/',
+  ']': '=',
+  '=': ']',
+};
+
+const qwertyToDvorak: Record<string, string> = Object.entries(dvorakToQwerty).reduce(
+  (acc, [dvorak, qwerty]) => ({ ...acc, [qwerty]: dvorak }),
+  {},
+);
+
 export const formatKeys = (keys: string[] | undefined): string => {
   if (!keys || !keys.length) return '';
 
   const mapKey = (key: string) => {
-    switch (key) {
+    const lowerKey = key.toLowerCase();
+    const mappedKey = isDvorak ? qwertyToDvorak[lowerKey] || key : key;
+
+    switch (mappedKey) {
       case 'mod':
         return isMac ? 'meta' : 'control';
       case '⌘':
@@ -66,7 +118,7 @@ export const formatKeys = (keys: string[] | undefined): string => {
       case '!':
         return 'shift+1';
       default:
-        return key;
+        return mappedKey;
     }
   };
 
@@ -81,7 +133,10 @@ export const formatKeys = (keys: string[] | undefined): string => {
 
 export const formatDisplayKeys = (keys: string[]): string[] => {
   return keys.map((key) => {
-    switch (key) {
+    const lowerKey = key.toLowerCase();
+    const mappedKey = isDvorak ? qwertyToDvorak[lowerKey] || key : key;
+
+    switch (mappedKey) {
       case 'mod':
         return isMac ? '⌘' : 'Ctrl';
       case 'meta':
@@ -105,7 +160,7 @@ export const formatDisplayKeys = (keys: string[]): string[] => {
       case 'click':
         return 'Click';
       default:
-        return key.length === 1 ? key.toUpperCase() : key;
+        return mappedKey.length === 1 ? mappedKey.toUpperCase() : mappedKey;
     }
   });
 };
@@ -157,6 +212,7 @@ export function useShortcut(
       ...restOptions,
       scopes: [scope],
       preventDefault: shortcut.preventDefault || preventDefault,
+      useKey: true,
     },
     [handleKey],
   );
@@ -195,6 +251,7 @@ export function useShortcuts(
         return;
       }
       const getModifierString = (e: typeof hotkeysEvent) => {
+        console.log(e);
         const modifiers = [];
         if (e.meta) modifiers.push('meta');
         if (e.ctrl) modifiers.push('control');
@@ -226,6 +283,7 @@ export function useShortcuts(
       preventDefault: false, // We'll handle preventDefault per-shortcut
       keyup: false,
       keydown: true,
+      useKey: true,
     },
     [shortcutMap, handlers, options],
   );

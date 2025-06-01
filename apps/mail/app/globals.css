@@ -96,6 +96,7 @@
   body {
     @apply bg-background text-foreground font-sans;
     overscroll-behavior: none;
+    @apply style-scrollbar;
   }
 }
 
@@ -287,17 +288,6 @@
   background-color: hsl(var(--background));
   border-radius: 0.5rem;
   padding: 0.5rem;
-}
-
-/* remove outline */
-.ProseMirror:focus {
-  outline: none;
-}
-/* set */
-.ProseMirror {
-  min-height: 200px;
-  max-height: 300px;
-  overflow: scroll;
 }
 
 /* Animation keyframes */

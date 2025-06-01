@@ -4,12 +4,12 @@ import { Outlet } from 'react-router';
 
 export default function Layout() {
   return (
-    <HotkeyProviderWrapper>
-      <CommandPaletteProvider>
+    <CommandPaletteProvider>
+      <HotkeyProviderWrapper>
         <div className="relative flex max-h-screen w-full overflow-hidden">
           <Outlet />
         </div>
-      </CommandPaletteProvider>
-    </HotkeyProviderWrapper>
+      </HotkeyProviderWrapper>
+    </CommandPaletteProvider>
   );
 }

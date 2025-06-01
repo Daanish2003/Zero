@@ -1,25 +1,4 @@
 import {
-  Archive2,
-  Bell,
-  ChevronDown,
-  ExclamationCircle,
-  GroupPeople,
-  Lightning,
-  People,
-  Star2,
-  Tag,
-  Trash,
-  User,
-} from '../icons/icons';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
   cn,
   FOLDERS,
   formatDate,
@@ -28,39 +7,38 @@ import {
   parseNaturalLanguageSearch,
 } from '@/lib/utils';
 import {
-  type ComponentProps,
   memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
 } from 'react';
-import { useIsFetching, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Archive2, ExclamationCircle, GroupPeople, Star2, Trash } from '../icons/icons';
+import { useOptimisticThreadState } from '@/components/mail/optimistic-thread-state';
+import { focusedIndexAtom, useMailNavigation } from '@/hooks/use-mail-navigation';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { moveThreadsTo, type ThreadDestination } from '@/lib/thread-actions';
 import type { MailSelectMode, ParsedMessage, ThreadProps } from '@/types';
 import { ThreadContextMenu } from '@/components/context/thread-context';
+import { useOptimisticActions } from '@/hooks/use-optimistic-actions';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { useMail, type Config } from '@/components/mail/use-mail';
-import { Briefcase, Check, Star, StickyNote } from 'lucide-react';
-import { useMailNavigation } from '@/hooks/use-mail-navigation';
-import { focusedIndexAtom } from '@/hooks/use-mail-navigation';
-import { backgroundQueueAtom } from '@/store/backgroundQueue';
+import { type ThreadDestination } from '@/lib/thread-actions';
 import { useThread, useThreads } from '@/hooks/use-threads';
 import { useSearchValue } from '@/hooks/use-search-value';
 import { highlightText } from '@/lib/email-utils.client';
 import { useHotkeysContext } from 'react-hotkeys-hook';
+import { AnimatePresence, motion } from 'motion/react';
+import { useIsFetching } from '@tanstack/react-query';
 import { useTRPC } from '@/providers/query-provider';
 import { useThreadLabels } from '@/hooks/use-labels';
-import { Progress } from '@/components/ui/progress';
-import { Spinner } from '@/components/ui/spinner';
 import { useKeyState } from '@/hooks/use-hot-key';
 import { VList, type VListHandle } from 'virtua';
 import { RenderLabels } from './render-labels';
 import { Badge } from '@/components/ui/badge';
 import { useDraft } from '@/hooks/use-drafts';
-import { useStats } from '@/hooks/use-stats';
+import { Check, Star } from 'lucide-react';
 import { useTranslations } from 'use-intl';
 import { useParams } from 'react-router';
 import { useTheme } from 'next-themes';
@@ -68,7 +46,6 @@ import { Button } from '../ui/button';
 import { useQueryState } from 'nuqs';
 import { Categories } from './mail';
 import { useAtom } from 'jotai';
-import { toast } from 'sonner';
 
 const Thread = memo(
   function Thread({
@@ -80,45 +57,79 @@ const Thread = memo(
     const [searchValue, setSearchValue] = useSearchValue();
     const t = useTranslations();
     const { folder } = useParams<{ folder: string }>();
-    const [{ refetch: refetchThreads }, threads] = useThreads();
+    const [{}, threads] = useThreads();
     const [threadId] = useQueryState('threadId');
-    const [, setBackgroundQueue] = useAtom(backgroundQueueAtom);
-    const { refetch: refetchStats } = useStats();
-    const {
-      data: getThreadData,
-      isGroupThread,
-      refetch: refetchThread,
-    } = useThread(message.id, message.historyId);
-    const [isStarred, setIsStarred] = useState(false);
-    const trpc = useTRPC();
-    const queryClient = useQueryClient();
-    const { mutateAsync: toggleStar } = useMutation(trpc.mail.toggleStar.mutationOptions());
+    const { data: getThreadData, isGroupThread } = useThread(message.id, message.historyId);
     const [id, setThreadId] = useQueryState('threadId');
-    const [activeReplyId, setActiveReplyId] = useQueryState('activeReplyId');
+    const [, setActiveReplyId] = useQueryState('activeReplyId');
     const [focusedIndex, setFocusedIndex] = useAtom(focusedIndexAtom);
+    const latestMessage = getThreadData?.latest;
+    const idToUse = useMemo(() => latestMessage?.threadId ?? latestMessage?.id, [latestMessage]);
 
-    useEffect(() => {
-      if (getThreadData?.latest?.tags) {
-        setIsStarred(getThreadData.latest.tags.some((tag) => tag.name === 'STARRED'));
+    const optimisticState = useOptimisticThreadState(idToUse ?? '');
+
+    const displayStarred = useMemo(() => {
+      if (optimisticState.optimisticStarred !== null) {
+        return optimisticState.optimisticStarred;
       }
-    }, [getThreadData?.latest?.tags]);
+      return getThreadData?.latest?.tags?.some((tag) => tag.name === 'STARRED') ?? false;
+    }, [optimisticState.optimisticStarred, getThreadData?.latest?.tags]);
+
+    const displayImportant = useMemo(() => {
+      if (optimisticState.optimisticImportant !== null) {
+        return optimisticState.optimisticImportant;
+      }
+      return getThreadData?.latest?.tags?.some((tag) => tag.name === 'IMPORTANT') ?? false;
+    }, [optimisticState.optimisticImportant, getThreadData?.latest?.tags]);
+
+    const displayUnread = useMemo(() => {
+      if (optimisticState.optimisticRead !== null) {
+        return !optimisticState.optimisticRead;
+      }
+      return getThreadData?.hasUnread ?? false;
+    }, [optimisticState.optimisticRead, getThreadData?.hasUnread]);
+
+    const optimisticLabels = useMemo(() => {
+      if (!getThreadData?.labels) return [];
+
+      const labels = [...getThreadData.labels];
+      const hasStarredLabel = labels.some((label) => label.name === 'STARRED');
+
+      if (optimisticState.optimisticStarred !== null) {
+        if (optimisticState.optimisticStarred && !hasStarredLabel) {
+          labels.push({ id: 'starred-optimistic', name: 'STARRED' });
+        } else if (!optimisticState.optimisticStarred && hasStarredLabel) {
+          return labels.filter((label) => label.name !== 'STARRED');
+        }
+      }
+
+      return labels;
+    }, [getThreadData?.labels, optimisticState.optimisticStarred]);
+
+    const { optimisticToggleStar } = useOptimisticActions();
 
     const handleToggleStar = useCallback(
       async (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (!getThreadData || !message.id) return;
+        if (!getThreadData || !idToUse) return;
 
-        const newStarredState = !isStarred;
-        setIsStarred(newStarredState);
-        if (newStarredState) {
-          toast.success(t('common.actions.addedToFavorites'));
-        } else {
-          toast.success(t('common.actions.removedFromFavorites'));
-        }
-        await toggleStar({ ids: [message.id] });
-        await refetchThread();
+        const newStarredState = !displayStarred;
+        optimisticToggleStar([idToUse], newStarredState);
       },
-      [getThreadData, message.id, isStarred, refetchThreads, t],
+      [getThreadData, idToUse, displayStarred, optimisticToggleStar],
+    );
+
+    const { optimisticToggleImportant } = useOptimisticActions();
+
+    const handleToggleImportant = useCallback(
+      async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!getThreadData || !idToUse) return;
+
+        const newImportantState = !displayImportant;
+        optimisticToggleImportant([idToUse], newImportantState);
+      },
+      [getThreadData, idToUse, displayImportant, optimisticToggleImportant],
     );
 
     const handleNext = useCallback(
@@ -136,42 +147,17 @@ const Thread = memo(
       [threads, id, focusedIndex],
     );
 
+    const { optimisticMoveThreadsTo } = useOptimisticActions();
+
     const moveThreadTo = useCallback(
       async (destination: ThreadDestination) => {
-        if (!message.id) return;
-        const promise = moveThreadsTo({
-          threadIds: [message.id],
-          currentFolder: folder ?? '',
-          destination,
-        });
-        setBackgroundQueue({ type: 'add', threadId: `thread:${message.id}` });
-        handleNext(message.id);
-        toast.success(
-          destination === 'inbox'
-            ? t('common.actions.movedToInbox')
-            : destination === 'spam'
-              ? t('common.actions.movedToSpam')
-              : destination === 'bin'
-                ? t('common.actions.movedToBin')
-                : t('common.actions.archived'),
-        );
-        toast.promise(promise, {
-          error: t('common.actions.failedToMove'),
-          finally: async () => {
-            await Promise.all([
-              refetchStats(),
-              refetchThreads(),
-              queryClient.invalidateQueries({
-                queryKey: trpc.mail.get.queryKey({ id: message.id }),
-              }),
-            ]);
-          },
-        });
+        if (!idToUse) return;
+        handleNext(idToUse);
+        optimisticMoveThreadsTo([idToUse], folder ?? '', destination);
       },
-      [message.id, folder, t, setBackgroundQueue, refetchStats, refetchThreads],
+      [idToUse, folder, optimisticMoveThreadsTo, handleNext],
     );
 
-    const latestMessage = getThreadData?.latest;
     const emailContent = getThreadData?.latest?.body;
 
     const { labels: threadLabels } = useThreadLabels(
@@ -203,14 +189,12 @@ const Thread = memo(
     const [mailState, setMail] = useMail();
 
     const isMailSelected = useMemo(() => {
-      if (!threadId || !latestMessage) return false;
-      const _threadId = latestMessage.threadId ?? message.id;
+      if (!threadId || !idToUse) return false;
+      const _threadId = idToUse;
       return _threadId === threadId || threadId === mailState.selected;
-    }, [threadId, message.id, latestMessage, mailState.selected]);
+    }, [threadId, idToUse, mailState.selected]);
 
-    const isMailBulkSelected = mailState.bulkSelected.includes(
-      latestMessage?.threadId ?? message.id,
-    );
+    const isMailBulkSelected = idToUse ? mailState.bulkSelected.includes(idToUse) : false;
 
     const isFolderInbox = folder === FOLDERS.INBOX || !folder;
     const isFolderSpam = folder === FOLDERS.SPAM;
@@ -227,10 +211,16 @@ const Thread = memo(
         <div
           className={'select-none border-b md:my-2 md:border-none'}
           onClick={onClick ? onClick(latestMessage) : undefined}
+          onMouseEnter={() => {
+            window.dispatchEvent(new CustomEvent('emailHover', { detail: { id: idToUse } }));
+          }}
+          onMouseLeave={() => {
+            window.dispatchEvent(new CustomEvent('emailHover', { detail: { id: null } }));
+          }}
         >
           <div
-            data-thread-id={latestMessage.threadId ?? latestMessage.id}
-            key={latestMessage.threadId ?? latestMessage.id}
+            data-thread-id={idToUse}
+            key={idToUse}
             className={cn(
               'hover:bg-offsetLight hover:bg-primary/5 group relative mx-1 flex cursor-pointer flex-col items-start rounded-lg py-2 text-left text-sm transition-all hover:opacity-100',
               (isMailSelected || isMailBulkSelected || isKeyboardFocused) &&
@@ -242,7 +232,7 @@ const Thread = memo(
           >
             <div
               className={cn(
-                'absolute right-2 z-[25] flex -translate-y-1/2 items-center gap-1 rounded-xl border bg-white p-1 opacity-0 shadow-sm group-hover:opacity-100 dark:bg-[#1A1A1A]',
+                'dark:bg-panelDark absolute right-2 z-[25] flex -translate-y-1/2 items-center gap-1 rounded-xl border bg-white p-1 opacity-0 shadow-sm group-hover:opacity-100',
                 index === 0 ? 'top-4' : 'top-[-1]',
               )}
             >
@@ -257,18 +247,23 @@ const Thread = memo(
                     <Star2
                       className={cn(
                         'h-4 w-4',
-                        isStarred
+                        displayStarred
                           ? 'fill-yellow-400 stroke-yellow-400'
                           : 'fill-transparent stroke-[#9D9D9D] dark:stroke-[#9D9D9D]',
                       )}
                     />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent className="mb-1 bg-white dark:bg-[#1A1A1A]">
-                  {isStarred ? t('common.threadDisplay.unstar') : t('common.threadDisplay.star')}
+                <TooltipContent
+                  side={index === 0 ? 'bottom' : 'top'}
+                  className="mb-1 bg-white dark:bg-[#1A1A1A]"
+                >
+                  {displayStarred
+                    ? t('common.threadDisplay.unstar')
+                    : t('common.threadDisplay.star')}
                 </TooltipContent>
               </Tooltip>
-              {/* <Tooltip>
+              <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
@@ -276,13 +271,16 @@ const Thread = memo(
                     className="h-6 w-6 [&_svg]:size-3.5"
                     onClick={handleToggleImportant}
                   >
-                    <ExclamationCircle className={cn(isImportant ? '' : 'opacity-50')} />
+                    <ExclamationCircle className={cn(displayImportant ? '' : 'opacity-25')} />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent className="mb-1 bg-white dark:bg-[#1A1A1A]">
+                <TooltipContent
+                  side={index === 0 ? 'bottom' : 'top'}
+                  className="dark:bg-panelDark mb-1 bg-white"
+                >
                   {t('common.mail.toggleImportant')}
                 </TooltipContent>
-              </Tooltip> */}
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -297,7 +295,10 @@ const Thread = memo(
                     <Archive2 className="fill-[#9D9D9D]" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent className="mb-1 bg-white dark:bg-[#1A1A1A]">
+                <TooltipContent
+                  side={index === 0 ? 'bottom' : 'top'}
+                  className="dark:bg-panelDark mb-1 bg-white"
+                >
                   {t('common.threadDisplay.archive')}
                 </TooltipContent>
               </Tooltip>
@@ -316,7 +317,10 @@ const Thread = memo(
                       <Trash className="fill-[#F43F5E]" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent className="mb-1 bg-white dark:bg-[#1A1A1A]">
+                  <TooltipContent
+                    side={index === 0 ? 'bottom' : 'top'}
+                    className="dark:bg-panelDark mb-1 bg-white"
+                  >
                     {t('common.actions.Bin')}
                   </TooltipContent>
                 </Tooltip>
@@ -335,10 +339,9 @@ const Thread = memo(
                     )}
                     onClick={(e: React.MouseEvent) => {
                       e.stopPropagation();
-                      const threadId = latestMessage.threadId ?? message.id;
                       setMail((prev: Config) => ({
                         ...prev,
-                        bulkSelected: prev.bulkSelected.filter((id: string) => id !== threadId),
+                        bulkSelected: prev.bulkSelected.filter((id: string) => id !== idToUse),
                       }));
                     }}
                   >
@@ -361,7 +364,7 @@ const Thread = memo(
                   )}
                 </Avatar>
                 <div className="z-1 relative">
-                  {getThreadData.hasUnread && !isMailSelected && !isFolderSent ? (
+                  {displayUnread && !isMailSelected && !isFolderSent ? (
                     <span className="absolute -bottom-[1px] right-0.5 size-2 rounded bg-[#006FFE]" />
                   ) : null}
                 </div>
@@ -373,7 +376,7 @@ const Thread = memo(
                     <div className="flex flex-row items-center gap-[4px]">
                       <span
                         className={cn(
-                          getThreadData.hasUnread && !isMailSelected ? 'font-bold' : 'font-medium',
+                          displayUnread && !isMailSelected ? 'font-bold' : 'font-medium',
                           'text-md flex items-baseline gap-1 group-hover:opacity-100',
                         )}
                       >
@@ -411,12 +414,12 @@ const Thread = memo(
                           </TooltipContent>
                         </Tooltip>
                       ) : null}
-                      <MailLabels labels={getThreadData.labels} />
+                      <MailLabels labels={optimisticLabels} />
                     </div>
                     {latestMessage.receivedOn ? (
                       <p
                         className={cn(
-                          'text-nowrap text-xs font-normal text-[#6D6D6D] opacity-70 transition-opacity group-hover:opacity-100 dark:text-[#8C8C8C]',
+                          'text-muted-foreground text-nowrap text-xs font-normal opacity-70 transition-opacity group-hover:opacity-100 dark:text-[#8C8C8C]',
                           isMailSelected && 'opacity-100',
                         )}
                       >
@@ -472,16 +475,35 @@ const Thread = memo(
       ) : null;
 
     return latestMessage ? (
-      <ThreadContextMenu
-        emailId={message.id}
-        threadId={latestMessage.threadId ?? message.id}
-        isInbox={isFolderInbox}
-        isSpam={isFolderSpam}
-        isSent={isFolderSent}
-        isBin={isFolderBin}
-      >
-        {content}
-      </ThreadContextMenu>
+      <AnimatePresence mode="sync">
+        {!optimisticState.shouldHide && (
+          <motion.div
+            key={message.id}
+            initial={{ opacity: 1, height: 'auto' }}
+            exit={{
+              opacity: 0,
+              height: 0,
+              marginTop: 0,
+              marginBottom: 0,
+              overflow: 'hidden',
+              transition: { duration: 0.3, ease: 'easeInOut' },
+            }}
+            layout
+          >
+            {idToUse ? (
+              <ThreadContextMenu
+                threadId={idToUse}
+                isInbox={isFolderInbox}
+                isSpam={isFolderSpam}
+                isSent={isFolderSent}
+                isBin={isFolderBin}
+              >
+                {content}
+              </ThreadContextMenu>
+            ) : null}
+          </motion.div>
+        )}
+      </AnimatePresence>
     ) : null;
   },
   (prev, next) => {
@@ -802,7 +824,7 @@ export const MailList = memo(
                   />
                   <div className="mt-5">
                     <p className="text-lg">It's empty here</p>
-                    <p className="text-md text-[#6D6D6D] dark:text-white/50">
+                    <p className="text-md text-muted-foreground dark:text-white/50">
                       Search for another email or{' '}
                       <button className="underline" onClick={clearFilters}>
                         clear filters

@@ -17,16 +17,27 @@ import {
   Printer,
 } from '../icons/icons';
 import {
+  Briefcase,
+  Star,
+  StickyNote,
+  Users,
+  Lock,
+  Download,
+  MoreVertical,
+  HardDriveDownload,
+  Paperclip,
+} from 'lucide-react';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { Briefcase, Star, StickyNote, Users, Lock, Download, MoreVertical } from 'lucide-react';
 import { memo, useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
+import type { Sender, ParsedMessage, Attachment } from '@/types';
 import { useActiveConnection } from '@/hooks/use-connections';
 import { handleUnsubscribe } from '@/lib/email-utils.client';
 import { getListUnsubscribeAction } from '@/lib/email-utils';
@@ -34,7 +45,6 @@ import AttachmentsAccordion from './attachments-accordion';
 import { cn, getEmailLogo, formatDate } from '@/lib/utils';
 import { useBrainState } from '../../hooks/use-summary';
 import { useThreadLabels } from '@/hooks/use-labels';
-import type { Sender, ParsedMessage } from '@/types';
 import { Markdown } from '@react-email/components';
 import AttachmentDialog from './attachment-dialog';
 import { useSummary } from '@/hooks/use-summary';
@@ -52,6 +62,7 @@ import { format, set } from 'date-fns';
 import { Button } from '../ui/button';
 import { useQueryState } from 'nuqs';
 import { Badge } from '../ui/badge';
+import JSZip from 'jszip';
 
 // Add formatFileSize utility function
 const formatFileSize = (size: number) => {
@@ -151,6 +162,7 @@ type Props = {
   onReply?: () => void;
   onReplyAll?: () => void;
   onForward?: () => void;
+  threadAttachments?: Attachment[];
 };
 
 const MailDisplayLabels = ({ labels }: { labels: string[] }) => {
@@ -198,7 +210,7 @@ const MailDisplayLabels = ({ labels }: { labels: string[] }) => {
             bgColor = 'bg-amber-500';
             break;
           case 'starred':
-            icon = <Star className="h-3.5 w-3.5 text-white" />;
+            icon = <Star className="h-3.5 w-3.5 fill-white text-white" />;
             bgColor = 'bg-yellow-500';
             break;
           default:
@@ -206,12 +218,19 @@ const MailDisplayLabels = ({ labels }: { labels: string[] }) => {
         }
 
         return (
-          <Badge
-            key={`${label}-${index}`}
-            className={`rounded-md p-1 ${bgColor} -ml-1.5 border-2 border-white transition-transform first:ml-0 dark:border-[#1A1A1A]`}
-          >
-            {icon}
-          </Badge>
+          <Tooltip key={`${label}-${index}`}>
+            <TooltipTrigger>
+              <Badge
+                key={`${label}-${index}`}
+                className={`rounded-md p-1 ${bgColor} dark:border-panelDark -ml-1.5 border-2 border-white transition-transform first:ml-0`}
+              >
+                {icon}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="text-xs text-white">{label}</p>
+            </TooltipContent>
+          </Tooltip>
         );
       })}
     </div>
@@ -236,6 +255,60 @@ const cleanEmailDisplay = (email?: string) => {
 const cleanNameDisplay = (name?: string) => {
   if (!name) return '';
   return name.trim();
+};
+
+const ThreadAttachments = ({ attachments }: { attachments: Attachment[] }) => {
+  if (!attachments || attachments.length === 0) return null;
+
+  const handleDownload = async (attachment: Attachment) => {
+    try {
+      // Convert base64 to blob
+      const byteCharacters = atob(attachment.body);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: attachment.mimeType });
+
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = attachment.filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading attachment:', error);
+    }
+  };
+
+  return (
+    <div className="mt-2 w-full">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium">
+          Thread Attachments <span className="text-[#8D8D8D]">[{attachments.length}]</span>
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {attachments.map((attachment) => (
+          <button
+            key={attachment.attachmentId}
+            onClick={() => handleDownload(attachment)}
+            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-[#F0F0F0] dark:bg-[#262626] dark:hover:bg-[#303030]"
+          >
+            <span className="text-muted-foreground">{getFileIcon(attachment.filename)}</span>
+            <span className="max-w-[200px] truncate" title={attachment.filename}>
+              {attachment.filename}
+            </span>
+            <span className="text-muted-foreground">{formatFileSize(attachment.size)}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 };
 
 const AiSummary = () => {
@@ -303,7 +376,114 @@ const ActionButton = ({ onClick, icon, text, shortcut }: ActionButtonProps) => {
   );
 };
 
-const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
+const downloadAttachment = (attachment: { body: string; mimeType: string; filename: string }) => {
+  try {
+    const byteCharacters = atob(attachment.body);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: attachment.mimeType });
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = attachment.filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Error downloading attachment:', error);
+  }
+};
+
+const handleDownloadAllAttachments =
+  (subject: string, attachments: { body: string; mimeType: string; filename: string }[]) => () => {
+    if (!attachments.length) return;
+
+    const zip = new JSZip();
+
+    console.log('attachments', attachments);
+    attachments.forEach((attachment) => {
+      try {
+        const byteCharacters = atob(attachment.body);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+
+        zip.file(attachment.filename, byteArray, {
+          binary: true,
+          date: new Date(),
+          unixPermissions: 0o644,
+        });
+      } catch (error) {
+        console.error(`Error adding ${attachment.filename} to zip:`, error);
+      }
+    });
+
+    // Generate and download the zip file
+    zip
+      .generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: {
+          level: 9,
+        },
+      })
+      .then((content) => {
+        const url = window.URL.createObjectURL(content);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `attachments-${subject || 'email'}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      })
+      .catch((error) => {
+        console.error('Error generating zip file:', error);
+      });
+
+    console.log('downloaded', subject, attachments);
+  };
+
+const openAttachment = (attachment: { body: string; mimeType: string; filename: string }) => {
+  try {
+    const byteCharacters = atob(attachment.body);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: attachment.mimeType });
+    const url = window.URL.createObjectURL(blob);
+
+    const width = 800;
+    const height = 600;
+    const left = (window.screen.width - width) / 2;
+    const top = (window.screen.height - height) / 2;
+
+    const popup = window.open(
+      url,
+      'attachment-viewer',
+      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no,location=no,menubar=no`,
+    );
+
+    if (popup) {
+      popup.focus();
+      // Clean up the URL after a short delay to ensure the browser has time to load it
+      setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+    }
+  } catch (error) {
+    console.error('Error opening attachment:', error);
+  }
+};
+
+const MailDisplay = ({ emailData, index, totalEmails, demo, threadAttachments }: Props) => {
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   //   const [unsubscribed, setUnsubscribed] = useState(false);
   //   const [isUnsubscribing, setIsUnsubscribing] = useState(false);
@@ -797,15 +977,15 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
         <PopoverTrigger asChild>
           <div
             key={person.email}
-            className="inline-flex items-center justify-start gap-1.5 overflow-hidden rounded-full border border-[#DBDBDB] bg-white p-1 pr-2 dark:border-[#2B2B2B] dark:bg-[#1A1A1A]"
+            className="dark:bg-panelDark inline-flex items-center justify-start gap-1.5 overflow-hidden rounded-full border bg-white p-1 pr-2"
           >
             <Avatar className="h-5 w-5">
               <AvatarImage src={getEmailLogo(person.email)} className="rounded-full" />
-              <AvatarFallback className="rounded-full bg-[#F5F5F5] text-xs font-bold dark:bg-[#373737]">
+              <AvatarFallback className="bg-offsetLight rounded-full text-xs font-bold dark:bg-[#373737]">
                 {getFirstLetterCharacter(person.name || person.email)}
               </AvatarFallback>
             </Avatar>
-            <div className="justify-start text-sm font-medium leading-none text-[#1A1A1A] dark:text-white">
+            <div className="text-panelDark justify-start text-sm font-medium leading-none dark:text-white">
               {person.name || person.email}
             </div>
           </div>
@@ -853,20 +1033,24 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
               <span className="inline-flex items-center gap-2 font-medium text-black dark:text-white">
                 <span>
                   {emailData.subject}{' '}
-                  <span className="text-[#6D6D6D] dark:text-[#8C8C8C]">
+                  <span className="text-muted-foreground dark:text-[#8C8C8C]">
                     {totalEmails && totalEmails > 1 && `[${totalEmails}]`}
                   </span>
                 </span>
-                {emailData?.tags ? (
+              </span>
+
+              <div className="mt-2 flex items-center gap-2">
+                {emailData?.tags?.length ? (
                   <MailDisplayLabels labels={emailData?.tags.map((t) => t.name) || []} />
                 ) : null}
-              </span>
-              <div className="mt-2 flex items-center gap-4">
+                {emailData?.tags?.length ? (
+                  <div className="bg-iconLight dark:bg-iconDark/20 relative h-3 w-0.5 rounded-full" />
+                ) : null}
                 <RenderLabels labels={threadLabels} />
                 {threadLabels.length ? (
                   <div className="bg-iconLight dark:bg-iconDark/20 relative h-3 w-0.5 rounded-full" />
                 ) : null}
-                <div className="flex items-center gap-2 text-sm text-[#6D6D6D] dark:text-[#8C8C8C]">
+                <div className="text-muted-foreground flex items-center gap-2 text-sm dark:text-[#8C8C8C]">
                   {(() => {
                     if (people.length <= 2) {
                       return people.map(renderPerson);
@@ -902,6 +1086,9 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                 </div>
               </div>
               {brainState?.enabled && <AiSummary />}
+              {threadAttachments && threadAttachments.length > 0 && (
+                <ThreadAttachments attachments={threadAttachments} />
+              )}
             </>
           )}
         </div>
@@ -940,13 +1127,13 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                               }}
                               ref={triggerRef}
                             >
-                              <p className="text-xs text-[#6D6D6D] underline dark:text-[#8C8C8C]">
+                              <p className="text-muted-foreground text-xs underline dark:text-[#8C8C8C]">
                                 Details
                               </p>
                             </button>
                           </PopoverTrigger>
                           <PopoverContent
-                            className="align-items-start w-[420px] rounded-lg border p-3 text-left shadow-lg dark:bg-[#1A1A1A]"
+                            className="align-items-start dark:bg-panelDark w-[420px] rounded-lg border p-3 text-left shadow-lg"
                             onBlur={(e) => {
                               if (!triggerRef.current?.contains(e.relatedTarget)) {
                                 setOpenDetailsPopover(false);
@@ -1043,7 +1230,7 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                       </div>
 
                       <div className="flex items-center justify-center">
-                        <time className="mr-2 text-sm font-medium text-[#6D6D6D] dark:text-[#8C8C8C]">
+                        <time className="text-muted-foreground mr-2 text-sm font-medium dark:text-[#8C8C8C]">
                           {formatDate(emailData?.receivedOn)}
                         </time>
 
@@ -1063,6 +1250,7 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                           <DropdownMenuContent align="end" className="bg-white dark:bg-[#313131]">
                             <DropdownMenuItem
                               onClick={(e) => {
+                                e.preventDefault();
                                 e.stopPropagation();
                                 printMail();
                               }}
@@ -1070,13 +1258,27 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                               <Printer className="fill-iconLight dark:fill-iconDark mr-2 h-4 w-4" />
                               Print
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={!emailData.attachments?.length}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleDownloadAllAttachments(
+                                  emailData.subject || 'email',
+                                  emailData.attachments || [],
+                                )();
+                              }}
+                            >
+                              <HardDriveDownload className="fill-iconLight dark:text-iconDark dark:fill-iconLight mr-2 h-4 w-4" />
+                              Download All Attachments
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
                     </div>
                     <div className="flex justify-between">
                       <div className="flex gap-1">
-                        <p className="text-sm font-medium text-[#6D6D6D] dark:text-[#8C8C8C]">
+                        <p className="text-muted-foreground text-sm font-medium dark:text-[#8C8C8C]">
                           To:{' '}
                           {(() => {
                             // Combine to and cc recipients
@@ -1111,7 +1313,7 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                           })()}
                         </p>
                         {(emailData?.bcc?.length || 0) > 0 && (
-                          <p className="text-sm font-medium text-[#6D6D6D] dark:text-[#8C8C8C]">
+                          <p className="text-muted-foreground text-sm font-medium dark:text-[#8C8C8C]">
                             Bcc:{' '}
                             {emailData?.bcc?.map((recipient, index) => (
                               <span key={recipient.email}>
@@ -1199,42 +1401,28 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
               {emailData?.attachments && emailData?.attachments.length > 0 ? (
                 <div className="mb-4 flex flex-wrap items-center gap-2 px-4 pt-4">
                   {emailData?.attachments.map((attachment, index) => (
-                    <div key={index}>
+                    <div key={index} className="flex">
                       <button
-                        className="dark: flex h-7 items-center gap-1 rounded-[5px] border bg-[#FAFAFA] px-4 text-sm font-medium hover:bg-[#F0F0F0] dark:bg-[#262626] dark:hover:bg-[#303030]"
-                        onClick={() => {
-                          try {
-                            // Convert base64 to blob
-                            const byteCharacters = atob(attachment.body);
-                            const byteNumbers = new Array(byteCharacters.length);
-                            for (let i = 0; i < byteCharacters.length; i++) {
-                              byteNumbers[i] = byteCharacters.charCodeAt(i);
-                            }
-                            const byteArray = new Uint8Array(byteNumbers);
-                            const blob = new Blob([byteArray], { type: attachment.mimeType });
-
-                            // Create object URL and trigger download
-                            const url = window.URL.createObjectURL(blob);
-                            const link = document.createElement('a');
-                            link.href = url;
-                            link.download = attachment.filename;
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
-                            window.URL.revokeObjectURL(url);
-                          } catch (error) {
-                            console.error('Error downloading attachment:', error);
-                          }
-                        }}
+                        className="flex cursor-pointer items-center gap-1 rounded-[5px] bg-[#FAFAFA] px-1.5 py-1 text-sm font-medium hover:bg-[#F0F0F0] dark:bg-[#262626] dark:hover:bg-[#303030]"
+                        onClick={() => openAttachment(attachment)}
                       >
                         {getFileIcon(attachment.filename)}
                         <span className="max-w-[15ch] truncate text-sm text-black dark:text-white">
                           {attachment.filename}
                         </span>{' '}
-                        <span className="whitespace-nowrap text-sm text-[#6D6D6D] dark:text-[#929292]">
+                        <span className="text-muted-foreground whitespace-nowrap text-sm dark:text-[#929292]">
                           {formatFileSize(attachment.size)}
                         </span>
                       </button>
+                      <button
+                        onClick={() => downloadAttachment(attachment)}
+                        className="flex cursor-pointer items-center gap-1 rounded-[5px] px-1.5 py-1 text-sm"
+                      >
+                        <HardDriveDownload className="text-muted-foreground dark:text-muted-foreground h-4 w-4 fill-[#FAFAFA] dark:fill-[#262626]" />
+                      </button>
+                      {index < (emailData?.attachments?.length || 0) - 1 && (
+                        <div className="m-auto h-2 w-[1px] bg-[#E0E0E0] dark:bg-[#424242]" />
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1247,7 +1435,7 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                     setMode('reply');
                     setActiveReplyId(emailData.id);
                   }}
-                  icon={<Reply className="fill-[#6D6D6D] dark:fill-[#9B9B9B]" />}
+                  icon={<Reply className="fill-muted-foreground dark:fill-[#9B9B9B]" />}
                   text={t('common.mail.reply')}
                   shortcut={isLastEmail ? 'r' : undefined}
                 />
@@ -1258,7 +1446,7 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                     setMode('replyAll');
                     setActiveReplyId(emailData.id);
                   }}
-                  icon={<ReplyAll className="fill-[#6D6D6D] dark:fill-[#9B9B9B]" />}
+                  icon={<ReplyAll className="fill-muted-foreground dark:fill-[#9B9B9B]" />}
                   text={t('common.mail.replyAll')}
                   shortcut={isLastEmail ? 'a' : undefined}
                 />
@@ -1269,7 +1457,7 @@ const MailDisplay = ({ emailData, index, totalEmails, demo }: Props) => {
                     setMode('forward');
                     setActiveReplyId(emailData.id);
                   }}
-                  icon={<Forward className="fill-[#6D6D6D] dark:fill-[#9B9B9B]" />}
+                  icon={<Forward className="fill-muted-foreground dark:fill-[#9B9B9B]" />}
                   text={t('common.mail.forward')}
                   shortcut={isLastEmail ? 'f' : undefined}
                 />

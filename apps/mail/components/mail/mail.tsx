@@ -14,20 +14,20 @@ import {
   Eye,
   Lightning,
   Mail,
+  ScanEye,
   Star2,
   Tag,
+  Trash,
   User,
   X,
-  Trash,
-  ScanEye,
-  Plus,
 } from '../icons/icons';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useActiveConnection, useConnections } from '@/hooks/use-connections';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Command, RefreshCcw, Settings2Icon, TrashIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCommandPalette } from '../context/command-palette-context';
+import { useOptimisticActions } from '@/hooks/use-optimistic-actions';
 import { ThreadDisplay } from '@/components/mail/thread-display';
 import { trpcClient, useTRPC } from '@/providers/query-provider';
 import { backgroundQueueAtom } from '@/store/backgroundQueue';
@@ -36,25 +36,28 @@ import { useMediaQuery } from '../../hooks/use-media-query';
 import { useSearchValue } from '@/hooks/use-search-value';
 import { MailList } from '@/components/mail/mail-list';
 import { useHotkeysContext } from 'react-hotkeys-hook';
-import { useParams, useNavigate } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { useMail } from '@/components/mail/use-mail';
-import { SidebarToggle } from '../ui/sidebar-toggle';
 import { PricingDialog } from '../ui/pricing-dialog';
+import { SidebarToggle } from '../ui/sidebar-toggle';
+import { Textarea } from '@/components/ui/textarea';
 import { useBrainState } from '@/hooks/use-summary';
 import { clearBulkSelectionAtom } from './use-mail';
 import AISidebar from '@/components/ui/ai-sidebar';
+import { Command, RefreshCcw } from 'lucide-react';
 import { cleanSearchValue, cn } from '@/lib/utils';
+import { useBilling } from '@/hooks/use-billing';
 import { useThreads } from '@/hooks/use-threads';
 import AIToggleButton from '../ai-toggle-button';
-import { useBilling } from '@/hooks/use-billing';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { useSession } from '@/lib/auth-client';
 import { ScrollArea } from '../ui/scroll-area';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useStats } from '@/hooks/use-stats';
 import { useTranslations } from 'use-intl';
-import { SearchBar } from './search-bar';
 import { useQueryState } from 'nuqs';
 import { useAtom } from 'jotai';
 import { toast } from 'sonner';
@@ -238,85 +241,134 @@ const AutoLabelingSettings = () => {
       </DialogTrigger>
       <DialogContent showOverlay className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Autolabeling Settings</DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle>Label Settings</DialogTitle>
+            <button
+              onClick={handleToggleAutolabeling}
+              className="bg-offsetLight dark:bg-offsetDark flex items-center gap-2 rounded-lg border px-1.5 py-1"
+            >
+              <span className="text-muted-foreground text-sm">
+                {isEnablingBrain || isDisablingBrain
+                  ? 'Updating...'
+                  : brainState?.enabled
+                    ? 'Disable autolabeling'
+                    : 'Enable autolabeling'}
+              </span>
+              <Switch checked={brainState?.enabled} />
+            </button>
+          </div>
+          <DialogDescription className="mt-2">
+            Configure the labels that Zero uses to automatically organize your emails.
+          </DialogDescription>
         </DialogHeader>
-        <DialogDescription className="mb-4 mt-2">
-          These are the labels Zero uses to autolabel your incoming emails. Feel free to modify them
-          however you like. Zero will create a new label in your account for each label you add - if
-          it does not exist already.
-        </DialogDescription>
+
         <ScrollArea className="h-[400px]">
-          <div className="space-y-2">
-            {labels.map((label) => (
-              <div key={label.id} className="flex items-start gap-2 rounded-lg border p-3">
-                <div className="flex-1 space-y-2">
-                  <input
-                    type="text"
-                    value={label.name}
-                    onChange={(e) => handleUpdateLabel(label.id, 'name', e.target.value)}
-                    className="w-full rounded-md border px-2 py-1 text-sm"
-                    placeholder="Label name"
-                  />
-                  <textarea
+          <div className="space-y-3">
+            {labels.map((label, index) => (
+              <div
+                key={label.id}
+                className="bg-card group relative space-y-2 rounded-lg border p-4 shadow-sm transition-shadow hover:shadow-md"
+              >
+                <div className="flex items-center justify-between">
+                  <Label
+                    htmlFor={`label-name-${index}`}
+                    className="text-muted-foreground text-xs font-medium"
+                  >
+                    Label Name
+                  </Label>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 transition-opacity group-hover:opacity-100"
+                    onClick={() => handleDeleteLabel(label.id)}
+                  >
+                    <Trash className="h-3 w-3 fill-[#F43F5E]" />
+                  </Button>
+                </div>
+                <Input
+                  id={`label-name-${index}`}
+                  type="text"
+                  value={label.name}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    handleUpdateLabel(label.id, 'name', e.target.value)
+                  }
+                  className="h-8"
+                  placeholder="e.g., Important, Follow-up, Archive"
+                />
+                <div className="space-y-2">
+                  <Label
+                    htmlFor={`label-usecase-${index}`}
+                    className="text-muted-foreground text-xs font-medium"
+                  >
+                    Use Case Description
+                  </Label>
+                  <Textarea
+                    id={`label-usecase-${index}`}
                     value={label.usecase}
-                    onChange={(e) => handleUpdateLabel(label.id, 'usecase', e.target.value)}
-                    className="w-full rounded-md border px-2 py-1 text-sm"
-                    placeholder="Label use case"
-                    rows={2}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                      handleUpdateLabel(label.id, 'usecase', e.target.value)
+                    }
+                    className="min-h-[60px] resize-none"
+                    placeholder="Describe when this label should be applied..."
                   />
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => handleDeleteLabel(label.id)}
-                >
-                  <Trash className="h-4 w-4 fill-[#F43F5E]" />
-                </Button>
               </div>
             ))}
-            <div className="flex items-start gap-2 rounded-lg border p-3">
-              <div className="flex-1 space-y-2">
-                <input
+
+            <div className="bg-muted/50 mt-3 space-y-2 rounded-lg border border-dashed p-4">
+              <div className="space-y-2">
+                <Label
+                  htmlFor="new-label-name"
+                  className="text-muted-foreground text-xs font-medium"
+                >
+                  New Label Name
+                </Label>
+                <Input
+                  id="new-label-name"
                   type="text"
                   value={newLabel.name}
-                  onChange={(e) => setNewLabel({ ...newLabel, name: e.target.value })}
-                  className="w-full rounded-md border px-2 py-1 text-sm"
-                  placeholder="New label name"
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewLabel({ ...newLabel, name: e.target.value })
+                  }
+                  className="h-8 dark:bg-[#141414]"
+                  placeholder="Enter a new label name"
                 />
-                <textarea
+              </div>
+              <div className="space-y-2">
+                <Label
+                  htmlFor="new-label-usecase"
+                  className="text-muted-foreground text-xs font-medium"
+                >
+                  Use Case Description
+                </Label>
+                <Textarea
+                  id="new-label-usecase"
                   value={newLabel.usecase}
-                  onChange={(e) => setNewLabel({ ...newLabel, usecase: e.target.value })}
-                  className="w-full rounded-md border px-2 py-1 text-sm"
-                  placeholder="New label use case"
-                  rows={2}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    setNewLabel({ ...newLabel, usecase: e.target.value })
+                  }
+                  className="min-h-[60px] resize-none dark:bg-[#141414]"
+                  placeholder="Describe when this label should be applied..."
                 />
               </div>
               <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
+                className="mt-2 h-8 w-full"
                 onClick={handleAddLabel}
                 disabled={!newLabel.name || !newLabel.usecase}
               >
-                <Plus className="h-4 w-4 fill-white" />
+                Add New Label
               </Button>
             </div>
           </div>
         </ScrollArea>
         <DialogFooter className="mt-4">
-          <div className="flex w-full justify-between">
-            <Button onClick={handleToggleAutolabeling} variant="outline" size="sm">
-              {brainState?.enabled ? 'Disable' : 'Enable'}
+          <div className="flex w-full justify-end gap-2">
+            <Button size="xs" variant="outline" onClick={handleResetToDefault}>
+              Default Labels
             </Button>
-            <div className="flex gap-2">
-              <Button onClick={handleResetToDefault} variant="outline" size="sm">
-                Use default labels
-              </Button>
-              <Button disabled={isPending} onClick={handleSubmit} size="sm">
-                Save
-              </Button>
-            </div>
+            <Button size="xs" onClick={handleSubmit} disabled={isPending}>
+              Save Changes
+            </Button>
           </div>
         </DialogFooter>
       </DialogContent>
@@ -337,6 +389,7 @@ export function MailLayout() {
   const prevFolderRef = useRef(folder);
   const { enableScope, disableScope } = useHotkeysContext();
   const { data: activeConnection } = useActiveConnection();
+  const { open, setOpen, activeFilters, clearAllFilters } = useCommandPalette();
 
   const activeAccount = useMemo(() => {
     if (!activeConnection?.id || !connections?.connections) return null;
@@ -473,7 +526,48 @@ export function MailLayout() {
                 </div>
               </div>
               <div className="p-2 px-[22px]">
-                <SearchBar />
+                <Button
+                  variant="outline"
+                  className={cn(
+                    'text-muted-foreground relative flex h-9 w-full select-none items-center justify-start overflow-hidden rounded-[0.5rem] border bg-white text-left text-sm font-normal shadow-none ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 dark:bg-[#141414]',
+                  )}
+                  onClick={() => setOpen(!open)}
+                >
+                  <span className="hidden truncate pr-20 lg:inline-block">
+                    {activeFilters.length > 0
+                      ? activeFilters.map((f) => f.display).join(', ')
+                      : 'Search & Filters'}
+                  </span>
+                  <span className="inline-block truncate pr-20 lg:hidden">
+                    {activeFilters.length > 0
+                      ? `${activeFilters.length} filter${activeFilters.length > 1 ? 's' : ''}`
+                      : 'Search...'}
+                  </span>
+
+                  <span className="absolute right-[0.45rem] top-[0.45rem] flex gap-1">
+                    {/* {activeFilters.length > 0 && (
+                      <Badge variant="secondary" className="ml-2 h-5 rounded px-1">
+                        {activeFilters.length}
+                      </Badge>
+                    )} */}
+                    {activeFilters.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 rounded px-1.5 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          clearAllFilters();
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                    <kbd className="bg-muted pointer-events-none hidden h-5 select-none items-center gap-1 rounded border px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
+                      <span className="text-sm">⌘</span> K
+                    </kbd>
+                  </span>
+                </Button>
                 <div className="mt-2">
                   {activeAccount?.providerId === 'google' && folder === 'inbox' && (
                     <CategorySelect isMultiSelectMode={mail.bulkSelected.length > 0} />
@@ -542,13 +636,16 @@ function BulkSelectActions() {
   const [{ refetch: refetchThreads }] = useThreads();
   const { refetch: refetchStats } = useStats();
   const trpc = useTRPC();
-  const { mutateAsync: markAsRead } = useMutation(trpc.mail.markAsRead.mutationOptions());
   const { mutateAsync: markAsImportant } = useMutation(trpc.mail.markAsImportant.mutationOptions());
-  const { mutateAsync: bulkArchive } = useMutation(trpc.mail.bulkArchive.mutationOptions());
-  const { mutateAsync: bulkStar } = useMutation(trpc.mail.bulkStar.mutationOptions());
-  const [, setBackgroundQueue] = useAtom(backgroundQueueAtom);
   const { mutateAsync: bulkDeleteThread } = useMutation(trpc.mail.bulkDelete.mutationOptions());
   const queryClient = useQueryClient();
+  const {
+    optimisticMarkAsRead,
+    optimisticToggleStar,
+    optimisticMoveThreadsTo,
+    optimisticDeleteThreads,
+  } = useOptimisticActions();
+  const [, setBackgroundQueue] = useAtom(backgroundQueueAtom);
 
   const handleMassUnsubscribe = async () => {
     setIsLoading(true);
@@ -599,11 +696,7 @@ function BulkSelectActions() {
         className="flex h-8 flex-1 items-center justify-center gap-1 overflow-hidden rounded-md border bg-white px-3 text-sm transition-all duration-300 ease-out hover:bg-gray-100 dark:border-none dark:bg-[#313131] dark:hover:bg-[#313131]/80"
         onClick={() => {
           if (mail.bulkSelected.length === 0) return;
-          toast.promise(markAsRead({ ids: mail.bulkSelected }).then(onMoveSuccess), {
-            loading: 'Marking as read...',
-            success: 'All done! marked as read',
-            error: 'Something went wrong!',
-          });
+          optimisticMarkAsRead(mail.bulkSelected);
         }}
       >
         <div className="relative overflow-visible">
@@ -620,53 +713,7 @@ function BulkSelectActions() {
             className="flex aspect-square h-8 items-center justify-center gap-1 overflow-hidden rounded-md border bg-white px-2 text-sm transition-all duration-300 ease-out hover:bg-gray-100 dark:border-none dark:bg-[#313131] dark:hover:bg-[#313131]/80"
             onClick={() => {
               if (mail.bulkSelected.length === 0) return;
-              toast.promise(markAsImportant({ ids: mail.bulkSelected }).then(onMoveSuccess), {
-                loading: 'Marking as important...',
-                success: 'All done! marked as important',
-                error: 'Something went wrong!',
-              });
-            }}
-          >
-            <div className="relative overflow-visible">
-              <Lightning className="fill-[#9D9D9D] dark:fill-[#9D9D9D]" />
-            </div>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{t('common.mail.markAsImportant')}</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            className="flex aspect-square h-8 items-center justify-center gap-1 overflow-hidden rounded-md border bg-white px-2 text-sm transition-all duration-300 ease-out hover:bg-gray-100 dark:border-none dark:bg-[#313131] dark:hover:bg-[#313131]/80"
-            onClick={() => {
-              if (mail.bulkSelected.length === 0) return;
-              toast.promise(bulkArchive({ ids: mail.bulkSelected }).then(onMoveSuccess), {
-                loading: 'Moving to archive...',
-                success: 'All done! moved to archive',
-                error: 'Something went wrong!',
-              });
-            }}
-          >
-            <div className="relative overflow-visible">
-              <Archive2 className="fill-[#9D9D9D]" />
-            </div>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{t('common.mail.archive')}</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            className="flex aspect-square h-8 items-center justify-center gap-1 overflow-hidden rounded-md border bg-white px-2 text-sm transition-all duration-300 ease-out hover:bg-gray-100 dark:border-none dark:bg-[#313131] dark:hover:bg-[#313131]/80"
-            onClick={() => {
-              if (mail.bulkSelected.length === 0) return;
-              toast.promise(bulkStar({ ids: mail.bulkSelected }).then(onMoveSuccess), {
-                loading: 'Marking as starred...',
-                success: 'All done! marked as starred',
-                error: 'Something went wrong!',
-              });
+              optimisticToggleStar(mail.bulkSelected, true);
             }}
           >
             <div className="relative overflow-visible">
@@ -675,6 +722,23 @@ function BulkSelectActions() {
           </button>
         </TooltipTrigger>
         <TooltipContent>{t('common.mail.starAll')}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            className="flex aspect-square h-8 items-center justify-center gap-1 overflow-hidden rounded-md border bg-white px-2 text-sm transition-all duration-300 ease-out hover:bg-gray-100 dark:border-none dark:bg-[#313131] dark:hover:bg-[#313131]/80"
+            onClick={() => {
+              if (mail.bulkSelected.length === 0) return;
+              optimisticMoveThreadsTo(mail.bulkSelected, folder, 'archive');
+            }}
+          >
+            <div className="relative overflow-visible">
+              <Archive2 className="fill-[#9D9D9D]" />
+            </div>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{t('common.mail.archive')}</TooltipContent>
       </Tooltip>
 
       <Dialog onOpenChange={setIsUnsub} open={isUnsub}>
@@ -731,7 +795,7 @@ function BulkSelectActions() {
               disabled={isLoading}
               onClick={handleMassUnsubscribe}
             >
-              {<span>Unsubscribe</span>}{' '}
+              <span>Unsubscribe</span>
               <div className="flex h-5 items-center justify-center gap-1 rounded-sm bg-white/10 px-1 dark:bg-black/10">
                 <Command className="h-2 w-3 text-white dark:text-[#929292]" />
                 <CurvedArrow className="mt-1.5 h-5 w-3.5 fill-white dark:fill-[#929292]" />
@@ -747,18 +811,7 @@ function BulkSelectActions() {
             className="flex aspect-square h-8 items-center justify-center gap-1 overflow-hidden rounded-md border border-[#FCCDD5] bg-[#FDE4E9] px-2 text-sm transition-all duration-300 ease-out hover:bg-[#FDE4E9]/80 dark:border-[#6E2532] dark:bg-[#411D23] dark:hover:bg-[#313131]/80 hover:dark:bg-[#411D23]/60"
             onClick={() => {
               if (mail.bulkSelected.length === 0) return;
-              toast.promise(
-                new Promise((resolve, reject) => {
-                  mail.bulkSelected.map((id) =>
-                    setBackgroundQueue({ type: 'add', threadId: `thread:${id}` }),
-                  );
-                  return bulkDeleteThread({ ids: mail.bulkSelected }).then(resolve).catch(reject);
-                }).then(onMoveSuccess),
-                {
-                  success: 'All done! moved to bin',
-                  error: 'Something went wrong!',
-                },
-              );
+              optimisticDeleteThreads(mail.bulkSelected, folder);
             }}
           >
             <div className="relative overflow-visible">
@@ -784,7 +837,10 @@ export const Categories = () => {
       searchValue: 'is:important NOT is:sent NOT is:draft',
       icon: (
         <Lightning
-          className={cn('fill-[#6D6D6D] dark:fill-white', category === 'Important' && 'fill-white')}
+          className={cn(
+            'fill-muted-foreground dark:fill-white',
+            category === 'Important' && 'fill-white',
+          )}
         />
       ),
     },
@@ -794,7 +850,10 @@ export const Categories = () => {
       searchValue: 'NOT is:draft (is:inbox OR (is:sent AND to:me))',
       icon: (
         <Mail
-          className={cn('fill-[#6D6D6D] dark:fill-white', category === 'All Mail' && 'fill-white')}
+          className={cn(
+            'fill-muted-foreground dark:fill-white',
+            category === 'All Mail' && 'fill-white',
+          )}
         />
       ),
       colors:
@@ -806,7 +865,10 @@ export const Categories = () => {
       searchValue: 'is:personal NOT is:sent NOT is:draft',
       icon: (
         <User
-          className={cn('fill-[#6D6D6D] dark:fill-white', category === 'Personal' && 'fill-white')}
+          className={cn(
+            'fill-muted-foreground dark:fill-white',
+            category === 'Personal' && 'fill-white',
+          )}
         />
       ),
     },
@@ -816,7 +878,10 @@ export const Categories = () => {
       searchValue: 'is:updates NOT is:sent NOT is:draft',
       icon: (
         <Bell
-          className={cn('fill-[#6D6D6D] dark:fill-white', category === 'Updates' && 'fill-white')}
+          className={cn(
+            'fill-muted-foreground dark:fill-white',
+            category === 'Updates' && 'fill-white',
+          )}
         />
       ),
     },
@@ -827,7 +892,7 @@ export const Categories = () => {
       icon: (
         <Tag
           className={cn(
-            'fill-[#6D6D6D] dark:fill-white',
+            'fill-muted-foreground dark:fill-white',
             category === 'Promotions' && 'fill-white',
           )}
         />
@@ -840,7 +905,7 @@ export const Categories = () => {
       icon: (
         <ScanEye
           className={cn(
-            'h-4 w-4 fill-[#6D6D6D] dark:fill-white',
+            'fill-muted-foreground h-4 w-4 dark:fill-white',
             category === 'Unread' && 'fill-white',
           )}
         />

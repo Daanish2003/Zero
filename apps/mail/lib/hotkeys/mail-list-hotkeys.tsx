@@ -1,15 +1,13 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useOptimisticActions } from '@/hooks/use-optimistic-actions';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchValue } from '@/hooks/use-search-value';
 import { keyboardShortcuts } from '@/config/shortcuts';
+import { useLocation, useParams } from 'react-router';
 import { useMail } from '@/components/mail/use-mail';
-import { useTRPC } from '@/providers/query-provider';
 import { Categories } from '@/components/mail/mail';
 import { useShortcuts } from './use-hotkey-utils';
 import { useThreads } from '@/hooks/use-threads';
 import { cleanSearchValue } from '@/lib/utils';
-import { useStats } from '@/hooks/use-stats';
-import { useLocation } from 'react-router';
 import { useTranslations } from 'use-intl';
 import { useQueryState } from 'nuqs';
 import { toast } from 'sonner';
@@ -17,25 +15,25 @@ import { toast } from 'sonner';
 export function MailListHotkeys() {
   const scope = 'mail-list';
   const [mail, setMail] = useMail();
-  const [{ refetch }, items] = useThreads();
-  const { refetch: mutateStats } = useStats();
+  const [{}, items] = useThreads();
   const t = useTranslations();
   const hoveredEmailId = useRef<string | null>(null);
-  const trpc = useTRPC();
-  const queryClient = useQueryClient();
   const categories = Categories();
   const [, setCategory] = useQueryState('category');
   const [searchValue, setSearchValue] = useSearchValue();
   const pathname = useLocation().pathname;
-  const invalidateCount = () =>
-    queryClient.invalidateQueries({ queryKey: trpc.mail.count.queryKey() });
-  const { mutateAsync: bulkArchive } = useMutation(trpc.mail.bulkArchive.mutationOptions());
-  const { mutateAsync: markAsReadAction } = useMutation(
-    trpc.mail.markAsRead.mutationOptions({ onSuccess: () => invalidateCount() }),
-  );
-  const { mutateAsync: markAsUnreadAction } = useMutation(
-    trpc.mail.markAsUnread.mutationOptions({ onSuccess: () => invalidateCount() }),
-  );
+  const params = useParams<{ folder: string }>();
+  const folder = params?.folder ?? 'inbox';
+  const shouldUseHover = mail.bulkSelected.length === 0;
+
+  const {
+    optimisticMarkAsRead,
+    optimisticMarkAsUnread,
+    optimisticMoveThreadsTo,
+    optimisticToggleImportant,
+    optimisticDeleteThreads,
+    optimisticToggleStar,
+  } = useOptimisticActions();
 
   useEffect(() => {
     const handleEmailHover = (event: CustomEvent<{ id: string | null }>) => {
@@ -49,7 +47,6 @@ export function MailListHotkeys() {
   }, []);
 
   const selectAll = useCallback(() => {
-    console.log('selectAll');
     if (mail.bulkSelected.length > 0) {
       setMail((prev) => ({
         ...prev,
@@ -67,15 +64,8 @@ export function MailListHotkeys() {
   }, [items, mail]);
 
   const markAsRead = useCallback(() => {
-    if (hoveredEmailId.current) {
-      toast.promise(markAsReadAction({ ids: [hoveredEmailId.current] }), {
-        loading: t('common.actions.loading'),
-        success: async () => {
-          await Promise.all([refetch(), mutateStats()]);
-          return t('common.mail.markedAsRead');
-        },
-        error: t('common.mail.failedToMarkAsRead'),
-      });
+    if (shouldUseHover && hoveredEmailId.current) {
+      optimisticMarkAsRead([hoveredEmailId.current]);
       return;
     }
 
@@ -85,26 +75,12 @@ export function MailListHotkeys() {
       return;
     }
 
-    toast.promise(markAsReadAction({ ids: idsToMark }), {
-      loading: t('common.actions.loading'),
-      success: async () => {
-        await Promise.all([refetch(), mutateStats()]);
-        return t('common.mail.markedAsRead');
-      },
-      error: t('common.mail.failedToMarkAsRead'),
-    });
-  }, [mail.bulkSelected, refetch, mutateStats, t]);
+    optimisticMarkAsRead(idsToMark);
+  }, [mail.bulkSelected, optimisticMarkAsRead, t, shouldUseHover]);
 
   const markAsUnread = useCallback(() => {
-    if (hoveredEmailId.current) {
-      toast.promise(markAsUnreadAction({ ids: [hoveredEmailId.current] }), {
-        loading: t('common.actions.loading'),
-        success: async () => {
-          await Promise.all([refetch(), mutateStats()]);
-          return t('common.mail.markedAsUnread');
-        },
-        error: t('common.mail.failedToMarkAsUnread'),
-      });
+    if (shouldUseHover && hoveredEmailId.current) {
+      optimisticMarkAsUnread([hoveredEmailId.current]);
       return;
     }
 
@@ -114,73 +90,90 @@ export function MailListHotkeys() {
       return;
     }
 
-    toast.promise(markAsUnreadAction({ ids: idsToMark }), {
-      loading: t('common.actions.loading'),
-      success: async () => {
-        await Promise.all([refetch(), mutateStats()]);
-        return t('common.mail.markedAsUnread');
-      },
-      error: t('common.mail.failedToMarkAsUnread'),
-    });
-  }, [mail.bulkSelected, refetch, mutateStats, t]);
+    optimisticMarkAsUnread(idsToMark);
+  }, [mail.bulkSelected, optimisticMarkAsUnread, t, shouldUseHover]);
+
+  const markAsImportant = useCallback(() => {
+    if (shouldUseHover && hoveredEmailId.current) {
+      optimisticToggleImportant([hoveredEmailId.current], true);
+      return;
+    }
+
+    const idsToMark = mail.bulkSelected;
+    if (idsToMark.length === 0) {
+      toast.info(t('common.mail.noEmailsToSelect'));
+      return;
+    }
+
+    optimisticToggleImportant(idsToMark, true);
+  }, [mail.bulkSelected, optimisticToggleImportant, t, shouldUseHover]);
 
   const archiveEmail = useCallback(async () => {
-    if (hoveredEmailId.current) {
-      toast.promise(bulkArchive({ ids: [hoveredEmailId.current] }), {
-        loading: t('common.actions.loading'),
-        success: async () => {
-          await Promise.all([refetch(), mutateStats()]);
-          return t('common.mail.archived');
-        },
-        error: t('common.mail.failedToArchive'),
-      });
+    if (shouldUseHover && hoveredEmailId.current) {
+      optimisticMoveThreadsTo([hoveredEmailId.current], folder, 'archive');
       return;
     }
 
-    const idsToMark = mail.bulkSelected;
-    if (idsToMark.length === 0) {
+    const idsToArchive = mail.bulkSelected;
+    if (idsToArchive.length === 0) {
       toast.info(t('common.mail.noEmailsToSelect'));
       return;
     }
 
-    toast.promise(markAsUnreadAction({ ids: idsToMark }), {
-      loading: t('common.actions.loading'),
-      success: async () => {
-        await Promise.all([refetch(), mutateStats()]);
-        return t('common.mail.archived');
-      },
-      error: t('common.mail.failedToArchive'),
-    });
-  }, [mail]);
+    optimisticMoveThreadsTo(idsToArchive, folder, 'archive');
+  }, [mail.bulkSelected, folder, optimisticMoveThreadsTo, t, shouldUseHover]);
+
+  const bulkArchive = useCallback(() => {
+    if (shouldUseHover && hoveredEmailId.current) {
+      optimisticMoveThreadsTo([hoveredEmailId.current], folder, 'archive');
+      return;
+    }
+
+    const idsToArchive = mail.bulkSelected;
+    if (idsToArchive.length === 0) {
+      toast.info(t('common.mail.noEmailsToSelect'));
+      return;
+    }
+
+    optimisticMoveThreadsTo(idsToArchive, folder, 'archive');
+  }, [mail.bulkSelected, folder, optimisticMoveThreadsTo, t, shouldUseHover]);
+
+  const bulkDelete = useCallback(() => {
+    if (shouldUseHover && hoveredEmailId.current) {
+      optimisticDeleteThreads([hoveredEmailId.current], folder);
+      return;
+    }
+
+    const idsToDelete = mail.bulkSelected;
+    if (idsToDelete.length === 0) {
+      toast.info(t('common.mail.noEmailsToSelect'));
+      return;
+    }
+
+    optimisticDeleteThreads(idsToDelete, folder);
+  }, [mail.bulkSelected, folder, optimisticDeleteThreads, t, shouldUseHover]);
+
+  const bulkStar = useCallback(() => {
+    if (shouldUseHover && hoveredEmailId.current) {
+      optimisticToggleStar([hoveredEmailId.current], true);
+      return;
+    }
+
+    const idsToStar = mail.bulkSelected;
+    if (idsToStar.length === 0) {
+      toast.info(t('common.mail.noEmailsToSelect'));
+      return;
+    }
+
+    optimisticToggleStar(idsToStar, true);
+  }, [mail.bulkSelected, optimisticToggleStar, t, shouldUseHover]);
 
   const exitSelectionMode = useCallback(() => {
     setMail((prev) => ({
       ...prev,
       bulkSelected: [],
     }));
-  }, []);
-
-  // const scrollDown = useCallback(() => {
-  //   const scrollContainer = document.getElementById('mail-list-scroll');
-  //   console.log(scrollContainer);
-  //   if (scrollContainer) {
-  //     scrollContainer.scrollBy({
-  //       top: 100,
-  //       behavior: 'smooth',
-  //     });
-  //   }
-  // }, []);
-
-  // const scrollUp = useCallback(() => {
-  //   const scrollContainer = document.getElementById('mail-list-scroll');
-  //   console.log(scrollContainer);
-  //   if (scrollContainer) {
-  //     scrollContainer.scrollBy({
-  //       top: -100,
-  //       behavior: 'smooth',
-  //     });
-  //   }
-  // }, []);
+  }, [shouldUseHover]);
 
   const switchMailListCategory = useCallback(
     (category: string | null) => {
@@ -210,12 +203,13 @@ export function MailListHotkeys() {
     () => ({
       markAsRead,
       markAsUnread,
+      markAsImportant,
       selectAll,
       archiveEmail,
+      bulkArchive,
+      bulkDelete,
+      bulkStar,
       exitSelectionMode,
-      // muteThread,
-      // scrollDown,
-      // scrollUp,
       showImportant: () => {
         switchMailListCategory(null);
       },
@@ -235,7 +229,18 @@ export function MailListHotkeys() {
         switchMailListCategory('Unread');
       },
     }),
-    [switchMailListCategory, markAsRead, markAsUnread, selectAll, archiveEmail, exitSelectionMode],
+    [
+      switchMailListCategory,
+      markAsRead,
+      markAsUnread,
+      markAsImportant,
+      selectAll,
+      archiveEmail,
+      bulkArchive,
+      bulkDelete,
+      bulkStar,
+      exitSelectionMode,
+    ],
   );
 
   const mailListShortcuts = keyboardShortcuts.filter((shortcut) => shortcut.scope === scope);

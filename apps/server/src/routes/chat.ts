@@ -29,11 +29,9 @@ import { createDb } from '../db';
 import { z } from 'zod';
 
 export class ZeroAgent extends AIChatAgent<typeof env> {
-  auth: SimpleAuth;
   driver: MailManager | null = null;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.auth = createSimpleAuth();
   }
 
   private getDataStreamResponse(onFinish: StreamTextOnFinishCallback<{}>) {
@@ -41,7 +39,12 @@ export class ZeroAgent extends AIChatAgent<typeof env> {
       execute: async (dataStream) => {
         const connectionId = (await this.ctx.storage.get('connectionId')) as string;
         if (!connectionId || !this.driver) {
-          throw new Error('Unauthorized');
+          console.log('Unauthorized no driver or connectionId [1]', connectionId, this.driver);
+          await this.setupAuth();
+          if (!connectionId || !this.driver) {
+            console.log('Unauthorized no driver or connectionId', connectionId, this.driver);
+            throw new Error('Unauthorized no driver or connectionId [2]');
+          }
         }
         const tools = { ...authTools(this.driver, connectionId), buildGmailSearchQuery };
         const processedMessages = await processToolCalls(
@@ -68,51 +71,24 @@ export class ZeroAgent extends AIChatAgent<typeof env> {
     return dataStreamResponse;
   }
 
-  //   async onRequest(request: Request): Promise<Response> {
-  //     const token = request.headers.get('cookie');
-  //     if (!token) {
-  //       return new Response('Unauthorized', { status: 401 });
-  //     }
-  //     await this.setupAuth(token);
-  //     return this.getDataStreamResponse(() => {});
-  //   }
-
-  private async getSession(token: string) {
-    const session = await this.auth.api.getSession({ headers: parseHeaders(token) });
-    return session;
-  }
-
-  private async setupAuth(token: string) {
-    if (token) {
-      const session = await this.getSession(token);
-      if (session) {
-        const db = createDb(env.HYPERDRIVE.connectionString);
-        const _connection = await db.query.connection.findFirst({
-          where: eq(connection.email, session.user.email),
-        });
-        if (_connection) {
-          await this.ctx.storage.put('connectionId', _connection.id);
-          this.driver = connectionToDriver(_connection);
-        }
-        console.log('session exists', session.user.email);
-      } else {
-        console.log('No session', token);
+  private async setupAuth() {
+    if (this.name) {
+      const db = createDb(env.HYPERDRIVE.connectionString);
+      const _connection = await db.query.connection.findFirst({
+        where: eq(connection.userId, this.name),
+      });
+      if (_connection) {
+        await this.ctx.storage.put('connectionId', _connection.id);
+        this.driver = connectionToDriver(_connection);
       }
     }
   }
 
-  async onConnect(_: Connection, ctx: ConnectionContext) {
-    const token = ctx.request.headers.get('Cookie');
-    if (!token) {
-      throw new Error('Unauthorized');
-    }
-    await this.setupAuth(token);
+  async onConnect() {
+    await this.setupAuth();
   }
 
   async onChatMessage(onFinish: StreamTextOnFinishCallback<{}>) {
-    if (!this.driver) {
-      return new Response('Unauthorized', { status: 401 });
-    }
     return this.getDataStreamResponse(onFinish);
   }
 }
@@ -189,17 +165,20 @@ export class ZeroMCP extends McpAgent<typeof env, {}, { cookie: string }> {
             return [
               {
                 type: 'text' as const,
-                text: loadedThread.latest?.subject ?? '',
-              },
-              {
-                type: 'text' as const,
-                text: `ThreadId: ${thread.id}`,
+                text: `Subject: ${loadedThread.latest?.subject} | ID: ${thread.id} | Received: ${loadedThread.latest?.receivedOn}`,
               },
             ];
           }),
         );
         return {
-          content: content.flat(),
+          content: content.length
+            ? content.flat()
+            : [
+                {
+                  type: 'text' as const,
+                  text: 'No threads found',
+                },
+              ],
         };
       },
     );
@@ -211,23 +190,26 @@ export class ZeroMCP extends McpAgent<typeof env, {}, { cookie: string }> {
       },
       async (s) => {
         const thread = await driver.get(s.threadId);
+        const response = await env.VECTORIZE.getByIds([s.threadId]);
+        if (response.length && response?.[0]?.metadata?.['content']) {
+          const content = response[0].metadata['content'] as string;
+          const shortResponse = await env.AI.run('@cf/facebook/bart-large-cnn', {
+            input_text: content,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: shortResponse.summary,
+              },
+            ],
+          };
+        }
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(thread),
-            },
-            {
-              type: 'text',
               text: `Subject: ${thread.latest?.subject}`,
-            },
-            {
-              type: 'text',
-              text: `Total Messages: ${thread.totalReplies}`,
-            },
-            {
-              type: 'text',
-              text: `ThreadId: ${s.threadId}`,
             },
           ],
         };

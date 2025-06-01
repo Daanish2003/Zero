@@ -101,16 +101,16 @@ const navigation: Shortcut[] = [
     description: 'Go to bin',
     scope: 'navigation',
   },
+  {
+    keys: ['?', 'shift'],
+    action: 'helpWithShortcuts',
+    type: 'combination',
+    description: 'Show keyboard shortcuts',
+    scope: 'navigation',
+  },
 ];
 
 const globalShortcuts: Shortcut[] = [
-  {
-    keys: ['mod', '/'],
-    action: 'search',
-    type: 'combination',
-    description: 'Search',
-    scope: 'global',
-  },
   // {
   //   keys: ['?'],
   //   action: 'helpWithShortcuts',
@@ -140,6 +140,14 @@ const globalShortcuts: Shortcut[] = [
     description: 'Open command palette',
     scope: 'global',
   },
+  {
+    keys: ['mod', 'shift', 'f'],
+    action: 'clearAllFilters',
+    type: 'combination',
+    description: 'Clear all filters',
+    scope: 'global',
+    preventDefault: true,
+  },
 ];
 
 const mailListShortcuts: Shortcut[] = [
@@ -157,34 +165,34 @@ const mailListShortcuts: Shortcut[] = [
     description: 'Mark as unread',
     scope: 'mail-list',
   },
-  // {
-  //   keys: ['i'],
-  //   action: 'markAsImportant',
-  //   type: 'single',
-  //   description: 'Mark as important',
-  //   scope: 'mail-list',
-  // },
-  // {
-  //   keys: ['a'],
-  //   action: 'bulkArchive',
-  //   type: 'single',
-  //   description: 'Bulk archive',
-  //   scope: 'mail-list',
-  // },
-  // {
-  //   keys: ['d'],
-  //   action: 'bulkDelete',
-  //   type: 'single',
-  //   description: 'Bulk delete',
-  //   scope: 'mail-list',
-  // },
-  // {
-  //   keys: ['s'],
-  //   action: 'bulkStar',
-  //   type: 'single',
-  //   description: 'Bulk star',
-  //   scope: 'mail-list',
-  // },
+  {
+    keys: ['i'],
+    action: 'markAsImportant',
+    type: 'single',
+    description: 'Mark as important',
+    scope: 'mail-list',
+  },
+  {
+    keys: ['a'],
+    action: 'bulkArchive',
+    type: 'single',
+    description: 'Bulk archive',
+    scope: 'mail-list',
+  },
+  {
+    keys: ['d'],
+    action: 'bulkDelete',
+    type: 'single',
+    description: 'Bulk delete',
+    scope: 'mail-list',
+  },
+  {
+    keys: ['s'],
+    action: 'bulkStar',
+    type: 'single',
+    description: 'Bulk star',
+    scope: 'mail-list',
+  },
   // {
   //   keys: ['u'],
   //   action: 'bulkUnstar',
